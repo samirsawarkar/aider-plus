@@ -1,0 +1,15 @@
+default: 1
+
+models:
+  1:
+    name: qwen3-next
+    model: openai/qwen/qwen3-coder-next
+  2:
+    name: deepseek-v4-pro
+    model: openai/deepseek/deepseek-v4-pro
+  3:
+    name: glm-5.1
+    model: openai/z-ai/glm-5.1
+  4:
+    name: kimi-k2.5
+    model: openai/moonshotai/kimi-k2.5
