@@ -135,6 +135,25 @@ class Commands:
         models.sanity_check_models(self.io, model)
         raise SwitchCoder(main_model=model)
 
+    def cmd_project_context(self, args):
+        "Display the loaded Global and Project Knowledge files"
+
+        self.io.tool_output("Global Knowledge")
+        if getattr(self.coder, "global_knowledge", None) and self.coder.global_knowledge.files_loaded:
+            for f in self.coder.global_knowledge.files_loaded:
+                self.io.tool_output(f)
+        else:
+            self.io.tool_output("None loaded")
+
+        self.io.tool_output("\nProject Knowledge")
+        if getattr(self.coder, "project_knowledge", None) and self.coder.project_knowledge.files_loaded:
+            for f in self.coder.project_knowledge.files_loaded:
+                self.io.tool_output(f)
+        else:
+            self.io.tool_output("None loaded")
+            
+        self.io.tool_output("\nLoaded successfully")
+
     def cmd_chat_mode(self, args):
         "Switch to a new chat mode"
 
@@ -273,6 +292,54 @@ class Commands:
             return
         return sorted(fun())
 
+    def cmd_context(self, args):
+        "Display loaded knowledge context, models, and commands"
+        output = []
+        
+        from pathlib import Path
+        
+        gk = getattr(self.coder, 'global_knowledge', None)
+        pk = getattr(self.coder, 'project_knowledge', None)
+        
+        output.append("Global Knowledge Loaded:")
+        if gk and gk.files_loaded:
+            for f in gk.files_loaded:
+                output.append(f"  - {f}")
+        else:
+            output.append("  (None)")
+            
+        output.append("")
+        output.append("Project Knowledge (AI-OS) Loaded:")
+        if pk and pk.files_loaded:
+            for f in pk.files_loaded:
+                output.append(f"  - {f}")
+        else:
+            output.append("  (None)")
+
+        output.append("")
+        output.append("Custom Commands Loaded:")
+        commands_dir = Path("~/.aider-plus/commands/").expanduser()
+        if commands_dir.is_dir():
+            cmd_files = list(commands_dir.glob("*.md"))
+            if cmd_files:
+                for md_file in cmd_files:
+                    output.append(f"  - /{md_file.stem}")
+            else:
+                output.append("  (None)")
+        else:
+            output.append("  (None)")
+            
+        output.append("")
+        current_model = getattr(self.coder.main_model, 'name', 'unknown')
+        output.append(f"Current Model: {current_model}")
+        
+        gk_len = len(gk.content) if gk else 0
+        pk_len = len(pk.content) if pk else 0
+        est_tokens = (gk_len + pk_len) // 4
+        output.append(f"Knowledge Token Estimate: ~{est_tokens} tokens")
+        
+        self.io.tool_output("\n".join(output))
+
     def get_commands(self):
         commands = []
         for attr in dir(self):
@@ -282,13 +349,120 @@ class Commands:
             cmd = cmd.replace("_", "-")
             commands.append("/" + cmd)
 
-        return commands
+        commands_dir = Path("~/.aider-plus/commands/").expanduser()
+        if commands_dir.is_dir():
+            for md_file in commands_dir.glob("*.md"):
+                commands.append("/" + md_file.stem)
+
+        models_yaml = Path("~/.aider-plus/models.yaml").expanduser()
+        if models_yaml.exists():
+            try:
+                import yaml
+                with open(models_yaml, "r") as f:
+                    config = yaml.safe_load(f) or {}
+                models_dict = config.get("models", {})
+                if models_dict:
+                    commands.append("/llm")
+                    for key in models_dict:
+                        commands.append(f"/llm{key}")
+            except Exception:
+                pass
+
+        return sorted(list(set(commands)))
 
     def do_run(self, cmd_name, args):
         cmd_name = cmd_name.replace("-", "_")
         cmd_method_name = f"cmd_{cmd_name}"
         cmd_method = getattr(self, cmd_method_name, None)
         if not cmd_method:
+            if cmd_name.startswith("llm"):
+                models_yaml = Path("~/.aider-plus/models.yaml").expanduser()
+                if models_yaml.exists():
+                    try:
+                        import yaml
+                        with open(models_yaml, "r") as f:
+                            config = yaml.safe_load(f) or {}
+                        models_dict = config.get("models", {})
+
+                        if cmd_name == "llm":
+                            # Display current profile and all available
+                            output = []
+                            # Try to match current model to a profile
+                            current_model_name = self.coder.main_model.name
+                            matched_profile = None
+                            for key, p in models_dict.items():
+                                if p.get("model") == current_model_name:
+                                    matched_profile = key
+                                    break
+                            
+                            if matched_profile:
+                                output.append(f"Current Profile: {matched_profile}")
+                                output.append(f"Name: {models_dict[matched_profile].get('name', 'unknown')}")
+                                output.append("")
+                                output.append("Model:")
+                                output.append(current_model_name)
+                            else:
+                                output.append("Current Profile: Custom")
+                                output.append(f"Model:\n{current_model_name}")
+
+                            output.append("")
+                            output.append("Available Profiles:")
+                            output.append("")
+                            for key, p in models_dict.items():
+                                output.append(f"{key} - {p.get('name', 'unknown')}")
+                            
+                            self.io.tool_output("\n".join(output))
+                            return
+
+                        profile_id = cmd_name[3:]
+                        str_models_dict = {str(k): v for k, v in models_dict.items()}
+                        profile = str_models_dict.get(profile_id)
+                        
+                        if profile:
+                            target_model = profile.get("model")
+                            if target_model:
+                                self.io.tool_output(f"Switched model:\n\nProfile: {profile_id}\nName: {profile.get('name', 'unknown')}\n\nModel:\n{target_model}")
+                                if target_model == self.coder.main_model.name:
+                                    return
+                                
+                                from aider import models
+                                model = models.Model(
+                                    target_model,
+                                    editor_model=self.coder.main_model.editor_model.name,
+                                    weak_model=self.coder.main_model.weak_model.name,
+                                )
+                                models.sanity_check_models(self.io, model)
+                                
+                                old_model_edit_format = self.coder.main_model.edit_format
+                                current_edit_format = self.coder.edit_format
+                                new_edit_format = current_edit_format
+                                if current_edit_format == old_model_edit_format:
+                                    new_edit_format = model.edit_format
+                                    
+                                raise SwitchCoder(main_model=model, edit_format=new_edit_format)
+                            else:
+                                self.io.tool_error(f"Profile {profile_id} is missing a model definition.")
+                                return
+                        else:
+                            self.io.tool_error(f"Profile {profile_id} not found in models.yaml.")
+                            return
+                    except SwitchCoder:
+                        raise
+                    except Exception as e:
+                        self.io.tool_error(f"Unable to read models.yaml: {e}")
+                        return
+
+            custom_cmd_path = Path(f"~/.aider-plus/commands/{cmd_name.replace('_', '-')}.md").expanduser()
+            if custom_cmd_path.is_file():
+                try:
+                    with open(custom_cmd_path, "r", encoding="utf-8") as f:
+                        content = f.read().strip()
+                    self.coder.active_command_content = content
+                    return args if args else "Please proceed with the command."
+                except Exception as e:
+                    self.io.tool_error(f"Unable to read custom command {cmd_name}: {e}")
+                    return
+
             self.io.tool_output(f"Error: Command {cmd_name} not found.")
             return
 

@@ -28,7 +28,7 @@ from typing import List
 
 from rich.console import Console
 
-from aider import __version__, models, prompts, urls, utils
+from aider import __version__, knowledge, models, prompts, urls, utils
 from aider.analytics import Analytics
 from aider.commands import Commands
 from aider.exceptions import LiteLLMExceptions
@@ -474,6 +474,9 @@ class Coder:
 
         if not self.repo:
             self.root = utils.find_common_root(self.abs_fnames)
+
+        self.global_knowledge = knowledge.load_global()
+        self.project_knowledge = knowledge.load_project(getattr(self, "root", None))
 
         if read_only_fnames:
             self.abs_read_only_fnames = set()
@@ -924,6 +927,10 @@ class Coder:
     def run_one(self, user_message, preproc):
         self.init_before_message()
 
+        # By default clear active command to prevent bleeding across turns
+        # Commands.do_run will set it again if the user runs a command this turn.
+        self.active_command_content = None
+
         if preproc:
             message = self.preproc_user_input(user_message)
         else:
@@ -1228,6 +1235,15 @@ class Coder:
         main_sys = self.fmt_system_prompt(self.gpt_prompts.main_system)
         if self.main_model.system_prompt_prefix:
             main_sys = self.main_model.system_prompt_prefix + "\n" + main_sys
+
+        if getattr(self, "global_knowledge", None) and self.global_knowledge.content:
+            main_sys += "\n\n# GLOBAL KNOWLEDGE:\n" + self.global_knowledge.content
+
+        if getattr(self, "project_knowledge", None) and self.project_knowledge.content:
+            main_sys += "\n\n# PROJECT KNOWLEDGE:\n" + self.project_knowledge.content
+
+        if getattr(self, "active_command_content", None):
+            main_sys += "\n\n# ACTIVE COMMAND:\n" + self.active_command_content
 
         example_messages = []
         if self.main_model.examples_as_sys_msg:

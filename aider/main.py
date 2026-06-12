@@ -774,6 +774,21 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             alias, model = parts
             models.MODEL_ALIASES[alias.strip()] = model.strip()
 
+    # Check for user-defined default model first in ~/.aider-plus/models.yaml
+    if not args.model:
+        try:
+            import yaml
+            models_yaml = Path("~/.aider-plus/models.yaml").expanduser()
+            if models_yaml.exists():
+                with open(models_yaml, "r") as f:
+                    config = yaml.safe_load(f) or {}
+                default_id = config.get("default")
+                models_dict = config.get("models", {})
+                str_models_dict = {str(k): v for k, v in models_dict.items()}
+                if default_id and str(default_id) in str_models_dict:
+                    args.model = str_models_dict[str(default_id)].get("model")
+        except Exception:
+            pass
     selected_model_name = select_default_model(args, io, analytics)
     if not selected_model_name:
         # Error message and analytics event are handled within select_default_model
@@ -818,6 +833,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
                 reason="OpenRouter key missing for specified model and OAuth failed/declined",
             )
             return 1
+
 
     main_model = models.Model(
         args.model,
